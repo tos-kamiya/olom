@@ -269,7 +269,7 @@ def update_message(message: Optional[Message]) -> Optional[Message]:
     return message
 
 
-def main(stdscr) -> None:
+def curses_main(stdscr) -> None:
     """
     Main game loop.
 
@@ -329,4 +329,9 @@ def main(stdscr) -> None:
 
 
 # Run the game using curses
-curses.wrapper(main)
+def main():
+    curses.wrapper(curses_main)
+
+
+if __name__ == "__main__":
+    main()
