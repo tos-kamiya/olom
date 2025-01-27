@@ -14,9 +14,15 @@ PIECE_PICTURE = dict(enumerate("0123456789X"))
 FIELD_PICTURE = dict(enumerate(".123456789X"))
 
 # Game configuration
-GAME_SPEED = 180  # Frame interval in milliseconds
+GAME_SPEED = 200  # Frame interval in milliseconds
 MESSAGE_SHOW_DURATION = 15  # Duration for messages to be displayed
 
+# Color configuration
+BOLD_THRESHOLD = 7
+ADDITIONAL_COLOR_PAIRS = [
+    (curses.COLOR_GREEN, curses.COLOR_BLACK),  # Active piece color
+    (curses.COLOR_BLUE, curses.COLOR_BLACK),   # Next piece color
+]
 
 @dataclass
 class GameState:
@@ -52,6 +58,10 @@ def generate_piece() -> List[int]:
     for _ in range(PIECE_SIZE):
         i = random.randrange(PIECE_WIDTH)
         cells[i] += 1
+    while cells[0] == 0:
+        cells.pop(0)
+    while cells[-1] == 0:
+        cells.pop()
     return cells
 
 
@@ -89,6 +99,12 @@ def draw_game(stdscr, state: GameState, message: Optional[Message], grayscale: b
     """
     stdscr.clear()
 
+    num_colors = 1 + len(ADDITIONAL_COLOR_PAIRS)
+    if grayscale:
+        color_pairs = [curses.color_pair(0)] * num_colors
+    else:
+        color_pairs = [curses.color_pair(i) for i in range(num_colors)]
+
     col = 0
     piece_queue = state.piece_queue
 
@@ -98,33 +114,30 @@ def draw_game(stdscr, state: GameState, message: Optional[Message], grayscale: b
         if piece is None:
             continue
         for v in piece:
-            if grayscale:
-                stdscr.addstr(0, col, PIECE_PICTURE[v])
-            else:
-                stdscr.addstr(0, col, PIECE_PICTURE[v], curses.color_pair(3))
+            stdscr.addstr(0, col, PIECE_PICTURE[v], color_pairs[2])
             col += 1
+        r = PIECE_WIDTH - len(piece)
+        if r > 0:
+            stdscr.addstr(0, col, " " * r)
+            col += r
         col += 1
 
-    # Draw the field and the current piece
-    if grayscale:
-        for c in range(FIELD_WIDTH):
+    # Draw the field and the active piece
+    for c in range(FIELD_WIDTH):
+        if piece_queue[0] is not None and state.piece_col <= c < state.piece_col + len(piece_queue[0]):
+            # Active piece being placed
+            v = state.game_field[c] + piece_queue[0][c - state.piece_col]
+            attr = color_pairs[1] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
+            stdscr.addstr(0, col + c, PIECE_PICTURE.get(v, "*"), attr)
+        else:
+            # Static field values
             v = state.game_field[c]
-            stdscr.addstr(0, col + c, FIELD_PICTURE.get(v, "*"))
-    else:
-        for c in range(FIELD_WIDTH):
-            if piece_queue[0] is not None and state.piece_col <= c < state.piece_col + len(piece_queue[0]):
-                v = state.game_field[c] + piece_queue[0][c - state.piece_col]
-                stdscr.addstr(0, col + c, PIECE_PICTURE.get(v, "*"), curses.color_pair(1))
-            else:
-                v = state.game_field[c]
-                stdscr.addstr(0, col + c, FIELD_PICTURE.get(v, "*"))
+            attr = color_pairs[0] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
+            stdscr.addstr(0, col + c, FIELD_PICTURE.get(v, "*"), attr)
     col += FIELD_WIDTH + 1
 
     # Draw the piece position
-    if grayscale:
-        stdscr.addstr(0, col, f"{state.piece_pos}")
-    else:
-        stdscr.addstr(0, col, f"{state.piece_pos}", curses.color_pair(1))
+    stdscr.addstr(0, col, f"{state.piece_pos}", color_pairs[1])
     col += 2
 
     # Draw the score or message
@@ -138,7 +151,7 @@ def draw_game(stdscr, state: GameState, message: Optional[Message], grayscale: b
 
 def fix_piece(state: GameState) -> None:
     """
-    Fix the current piece in the game field.
+    Fix active piece in the game field.
 
     Args:
         state (GameState): The current game state.
@@ -239,7 +252,7 @@ def update_game(state: GameState, key: int, clock_tick: int) -> Optional[Message
             if state.piece_pos == 0:  # Piece has reached the bottom
                 fix_piece(state)
                 message = clear_rects(state)
-                piece_queue[0] = None  # Mark the current piece as "used"
+                piece_queue[0] = None  # Mark the active piece as "used"
                 state.pieces_dropped += 1
 
                 # Adjust drop position speed after every 80 pieces
@@ -283,8 +296,8 @@ def curses_main(stdscr) -> None:
 
     # Initialize color pairs
     curses.start_color()
-    curses.init_pair(1, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Current piece color
-    curses.init_pair(3, curses.COLOR_BLUE, curses.COLOR_BLACK)   # Next piece color
+    for i, (fg, bg) in enumerate(ADDITIONAL_COLOR_PAIRS):
+        curses.init_pair(i + 1, fg, bg)
 
     clock_tick = 0  # Game clock tick counter
 
