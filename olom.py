@@ -335,6 +335,9 @@ def curses_main(stdscr) -> None:
     while True:
         draw_game(stdscr, state, message, grayscale=True)
 
+        # Update the message state
+        message = update_message(message)
+
         # Wait for user to exit
         key = stdscr.getch()
         if key == 27 or key == ord('q'):  # Exit if ESC or 'q' is pressed
