@@ -3,27 +3,29 @@ import curses
 from dataclasses import dataclass, field
 import random
 import re
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
+
+ColorPair = Any  # int or Tuple[int, int]
 
 # Constants
-FIELD_WIDTH = 10  # Width of the game field
-PIECE_WIDTH = 3   # Width of each piece
-PIECE_BLOCKS = 4    # Number of blocks in a piece
-MIN_RECT_WIDTH = 4  # Minimum width of a rectangle to be cleared
+FIELD_WIDTH = 10  # Width of the game field (number of columns)
+PIECE_WIDTH = 3  # Width of each piece (number of blocks in a single piece)
+PIECE_BLOCKS = 4  # Total number of blocks in a piece
+MIN_RECT_WIDTH = 4  # Minimum width of a rectangle to clear
 
 # Symbols for display
-PIECE_PICTURE = dict(enumerate("0123456789X"))
-FIELD_PICTURE = dict(enumerate(".123456789X"))
+PIECE_PICTURE = dict(enumerate("0123456789X"))  # Active piece symbols
+FIELD_PICTURE = dict(enumerate(".123456789X"))  # Static field symbols
 
 # Game configuration
 GAME_SPEED = 200  # Frame interval in milliseconds
-MESSAGE_SHOW_DURATION = 15  # Duration for messages to be displayed
+MESSAGE_SHOW_DURATION = 15  # Duration for messages to be displayed (frames)
 
 # Color configuration
-BOLD_THRESHOLD = 7
-ADDITIONAL_COLOR_PAIRS = [
+BOLD_THRESHOLD = 7  # Threshold for bold display
+ADDITIONAL_COLOR_PAIRS: List[ColorPair] = [
     (curses.COLOR_GREEN, curses.COLOR_BLACK),  # Active piece color
-    (curses.COLOR_BLUE, curses.COLOR_BLACK),   # Next piece color
+    (curses.COLOR_BLUE, curses.COLOR_BLACK),  # Next piece color
 ]
 
 
@@ -31,37 +33,64 @@ ADDITIONAL_COLOR_PAIRS = [
 class GameState:
     """
     Represents the state of the game.
+
+    Attributes:
+        game_field (List[int]): The current state of the game field (columns).
+        piece_queue (List[optional[List[int]]]): Queue of upcoming pieces.
+        piece_col (int): Horizontal position of the active piece.
+        piece_pos (int): Vertical position of the active piece.
+        score (int): Current game score.
+        piece_drop_pos (int): Starting vertical drop position of the active piece.
+        pieces_dropped (int): Total number of pieces dropped.
     """
+
     game_field: List[int] = field(default_factory=lambda: [0] * FIELD_WIDTH)
-    piece_queue: List[Optional[List[int]]] = field(default_factory=list)  # Queue of upcoming pieces
-    piece_col: int = 0  # Current horizontal position of the active piece
-    piece_pos: int = 9  # Current vertical position of the active piece
-    score: int = 0  # Current score
-    piece_drop_pos: int = 9  # Starting drop position
-    pieces_dropped: int = 0  # Total number of dropped pieces
+    piece_queue: List[Optional[List[int]]] = field(default_factory=list)
+    piece_col: int = 0
+    piece_pos: int = 9
+    score: int = 0
+    piece_drop_pos: int = 9
+    pieces_dropped: int = 0
 
 
 @dataclass
 class Message:
     """
     Represents a temporary message to be displayed in the game.
+
+    Attributes:
+        text (str): The message text to display.
+        time_left (int): Remaining time (in frames) before the message disappears.
     """
-    text: str = ""  # The message text
-    time_left: int = MESSAGE_SHOW_DURATION  # Remaining time before the message disappears
+
+    text: str = ""
+    time_left: int = MESSAGE_SHOW_DURATION
 
 
 def get_random_piece_generator(width: int, blocks: int) -> Callable[[], List[int]]:
+    """
+    Creates a random piece generator.
+
+    Args:
+        width (int): The width of the game field.
+        blocks (int): The number of blocks in a single piece.
+
+    Returns:
+        Callable[[], List[int]]: A function that generates a random piece.
+    """
+
     def gen_piece_random() -> List[int]:
         """
         Generate a new random piece.
 
         Returns:
-            List[int]: A list representing the piece.
+            List[int]: A list representing the piece (block counts per column).
         """
         cells = [0] * width
         for _ in range(blocks):
             i = random.randrange(width)
             cells[i] += 1
+        # Remove leading and trailing zeros
         while cells[0] == 0:
             cells.pop(0)
         while cells[-1] == 0:
@@ -71,46 +100,68 @@ def get_random_piece_generator(width: int, blocks: int) -> Callable[[], List[int
     return gen_piece_random
 
 
-def get_pattern_piece_generator(piece_pattern: List[List[int]]) -> Callable[[], List[int]]:
-    assert len(piece_pattern) > 0
+def get_pattern_piece_generator(
+    piece_pattern: List[List[int]],
+) -> Callable[[], List[int]]:
+    """
+    Creates a piece generator based on a predefined pattern.
+
+    Args:
+        piece_pattern (List[List[int]]): A list of pieces (each represented as a list of blocks).
+
+    Returns:
+        Callable[[], List[int]]: A function that generates pieces in a fixed pattern.
+    """
+    assert len(piece_pattern) > 0, "Piece pattern must not be empty."
     pattern_index = 0
 
     def gen_piece_pattern() -> List[int]:
-        nonlocal pattern_index
+        """
+        Generate the next piece in the pattern.
 
+        Returns:
+            List[int]: The next piece in the pattern.
+        """
+        nonlocal pattern_index
         piece = piece_pattern[pattern_index]
         pattern_index = (pattern_index + 1) % len(piece_pattern)
-
         return piece
 
     return gen_piece_pattern
 
 
 def scan_piece_pattern(pattern: str) -> List[List[int]]:
-    assert re.match(r"^[0-9,]+$", pattern) is not None
+    """
+    Parse a string representation of a piece pattern into a list of pieces.
+
+    Args:
+        pattern (str): A string representing the piece pattern (e.g., "202,112").
+
+    Returns:
+        List[List[int]]: A list of pieces, each represented as a list of blocks.
+    """
+    assert re.match(r"^[0-9,]+$", pattern) is not None, "Invalid pattern format."
 
     piece_strs = pattern.split(",")
-
     pieces = []
     for s in piece_strs:
         piece = list(map(int, s))
-        assert sum(piece) > 0, "empty piece"
-
+        assert sum(piece) > 0, "Empty piece detected in pattern."
         pieces.append(piece)
 
     return pieces
 
 
-def find_rect(game_field: List[int], min_length: int) -> Optional[tuple[int, int]]:
+def find_rect(game_field: List[int], min_length: int) -> Optional[Tuple[int, int]]:
     """
     Find a rectangle (a series of consecutive blocks of the same figure) in the game field.
 
     Args:
-        game_field (List[int]): The game field.
+        game_field (List[int]): The current state of the game field.
         min_length (int): The minimum length of a rectangle to find.
 
     Returns:
-        Optional[tuple[int, int]]: Start and end indices of the rectangle, or None if not found.
+        Optional[tuple[int, int]]: The start and end indices of the rectangle, or None if not found.
     """
     for c in range(len(game_field) - min_length + 1):
         v = game_field[c]
@@ -123,76 +174,106 @@ def find_rect(game_field: List[int], min_length: int) -> Optional[tuple[int, int
     return None
 
 
-def draw_game(stdscr, mode: str, state: GameState, message: Optional[Message], grayscale: bool = False) -> None:
+def draw_game(
+    stdscr: curses.window,
+    mode: str,
+    state: GameState,
+    message: Optional[Message],
+    grayscale: bool = False,
+) -> None:
     """
-    Draw the current game state.
+    Draw the current game state on the screen.
 
     Args:
-        stdscr: The curses screen object.
-        mode (str): Game mode.
-        state (GameState): The current game state.
-        message (Optional[Message]): A message to display, if any.
-        grayscale (bool): Whether to draw in grayscale mode (for game over).
+        stdscr (curses.window): The curses screen object for rendering the game.
+        mode (str): Current game mode (e.g., "pat" for pattern mode).
+        state (GameState): The current game state, including the field and piece positions.
+        message (Optional[Message]): A message to display on the screen (e.g., score updates).
+        grayscale (bool): Whether to draw in grayscale mode (used for game-over display).
     """
     stdscr.clear()
 
+    # Determine the color pairs to use
     num_colors = 1 + len(ADDITIONAL_COLOR_PAIRS)
     if grayscale:
+        # Grayscale mode: all colors default to color pair 0
         color_pairs = [curses.color_pair(0)] * num_colors
     else:
+        # Normal mode: use predefined color pairs
         color_pairs = [curses.color_pair(i) for i in range(num_colors)]
 
+    # Draw the game mode at the top-left corner
     col = 0
     if mode:
         stdscr.addstr(0, col, mode)
         col += len(mode) + 1
 
-    piece_queue = state.piece_queue
-
-    # Draw the next two pieces
+    # Draw the next two pieces in the queue
     for i in range(2, 0, -1):
-        piece = piece_queue[i]
+        piece = state.piece_queue[i]
         if piece is None:
             continue
         for v in piece:
             stdscr.addstr(0, col, PIECE_PICTURE[v], color_pairs[2])
             col += 1
-        r = PIECE_WIDTH - len(piece)
-        if r > 0:
-            stdscr.addstr(0, col, " " * r)
-            col += r
+        # Fill remaining space for alignment
+        remaining_space = PIECE_WIDTH - len(piece)
+        if remaining_space > 0:
+            stdscr.addstr(0, col, " " * remaining_space)
+            col += remaining_space
         col += 1
 
-    # Draw the field and the active piece
-    for c in range(FIELD_WIDTH):
-        if piece_queue[0] is not None and state.piece_col <= c < state.piece_col + len(piece_queue[0]):
-            # Active piece being placed
-            v = state.game_field[c] + piece_queue[0][c - state.piece_col]
-            attr = color_pairs[1] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
-            stdscr.addstr(0, col + c, PIECE_PICTURE.get(v, "*"), attr)
-        else:
-            # Static field values
-            v = state.game_field[c]
-            attr = color_pairs[0] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
-            stdscr.addstr(0, col + c, FIELD_PICTURE.get(v, "*"), attr)
-    col += FIELD_WIDTH + 1
+    # Draw the game field and the active piece
+    draw_field(stdscr, state, col, color_pairs)
 
-    # Draw the piece position
-    stdscr.addstr(0, col, f"{state.piece_pos}", color_pairs[1])
-    col += 2
+    # Draw the active piece's vertical position
+    stdscr.addstr(0, col + FIELD_WIDTH + 1, f"{state.piece_pos}", color_pairs[1])
 
     # Draw the score or message
     if message is not None:
-        stdscr.addstr(0, col, message.text)
+        stdscr.addstr(0, col + FIELD_WIDTH + 3, message.text)
     else:
-        stdscr.addstr(0, col, f"S: {state.score}")
+        stdscr.addstr(0, col + FIELD_WIDTH + 3, f"S: {state.score}")
 
     stdscr.refresh()
 
 
+def draw_field(
+    stdscr: curses.window,
+    state: GameState,
+    col_offset: int,
+    color_pairs: List[ColorPair],
+) -> None:
+    """
+    Helper function to draw the game field and the active piece.
+
+    Args:
+        stdscr (curses.window): The curses screen object.
+        state (GameState): The current game state, including the field and piece positions.
+        col_offset (int): The horizontal offset for drawing the field.
+        color_pairs (List[ColorPair]): Predefined color pairs for rendering.
+    """
+    for c in range(FIELD_WIDTH):
+        # Determine if the current column is part of the active piece
+        if state.piece_queue[
+            0
+        ] is not None and state.piece_col <= c < state.piece_col + len(
+            state.piece_queue[0]
+        ):
+            # Active piece being placed
+            v = state.game_field[c] + state.piece_queue[0][c - state.piece_col]
+            attr = color_pairs[1] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
+            stdscr.addstr(0, col_offset + c, PIECE_PICTURE.get(v, "*"), attr)
+        else:
+            # Static field values
+            v = state.game_field[c]
+            attr = color_pairs[0] | (curses.A_BOLD if v >= BOLD_THRESHOLD else 0)
+            stdscr.addstr(0, col_offset + c, FIELD_PICTURE.get(v, "*"), attr)
+
+
 def fix_piece(state: GameState) -> None:
     """
-    Fix active piece in the game field.
+    Fix the active piece in the game field once it reaches the bottom.
 
     Args:
         state (GameState): The current game state.
@@ -201,18 +282,19 @@ def fix_piece(state: GameState) -> None:
     if piece_queue[0] is not None:
         for c in range(FIELD_WIDTH):
             if state.piece_col <= c < state.piece_col + len(piece_queue[0]):
+                # Add the active piece's blocks to the game field
                 state.game_field[c] += piece_queue[0][c - state.piece_col]
 
 
 def clear_rects(state: GameState) -> Optional[Message]:
     """
-    Clear rectangles (rectangles of consecutive blocks) from the game field.
+    Clear rectangles (consecutive blocks of the same value) from the game field.
 
     Args:
         state (GameState): The current game state.
 
     Returns:
-        Optional[Message]: A message representing the score gained, or None if no rectangles were cleared.
+        Optional[Message]: A message showing the score gained, or None if no rectangles were cleared.
     """
     game_field = state.game_field
 
@@ -227,21 +309,23 @@ def clear_rects(state: GameState) -> Optional[Message]:
         c, d = r
         num = game_field[c]
 
+        # Clear the rectangle
         for j in range(c, d):
             game_field[j] = 0
 
-        w = d - c - MIN_RECT_WIDTH + 1
-        score_add = num * w ** 3
+        # Calculate and update the score
+        width = d - c - MIN_RECT_WIDTH + 1
+        score_add = num * width**3
         state.score += score_add
-        message_text += f"+{score_add}"
+        message_text += f"+{score_add} "
 
     if rect_found:
+        # Apply gravity to the game field
         for i in range(len(game_field)):
             if game_field[i] > 0:
                 game_field[i] -= 1
 
-    if message_text:
-        return Message(text=message_text)
+    return Message(text=message_text.strip()) if message_text else None
 
 
 def check_game_over(game_field: List[int]) -> bool:
@@ -257,7 +341,9 @@ def check_game_over(game_field: List[int]) -> bool:
     return any(v >= 11 for v in game_field)
 
 
-def update_game(state: GameState, key: int, clock_tick: int, piece_generator) -> Optional[Message]:
+def update_game(
+    state: GameState, key: int, clock_tick: int, piece_generator
+) -> Optional[Message]:
     """
     Update the game state based on user input and the game clock.
 
@@ -274,11 +360,16 @@ def update_game(state: GameState, key: int, clock_tick: int, piece_generator) ->
     piece_queue = state.piece_queue
     if piece_queue[0] is not None:
         # Handle user input for moving or dropping the piece
-        if key in [curses.KEY_LEFT, ord('a')] and state.piece_col > 0:  # Move left
+        if key in [curses.KEY_LEFT, ord("a")] and state.piece_col > 0:  # Move left
             state.piece_col -= 1
-        elif key in [curses.KEY_RIGHT, ord('d')] and state.piece_col < FIELD_WIDTH - len(piece_queue[0]):  # Move right
+        elif key in [
+            curses.KEY_RIGHT,
+            ord("d"),
+        ] and state.piece_col < FIELD_WIDTH - len(
+            piece_queue[0]
+        ):  # Move right
             state.piece_col += 1
-        elif key in [curses.KEY_DOWN, ord('s')]:  # Drop piece immediately
+        elif key in [curses.KEY_DOWN, ord("s")]:  # Drop piece immediately
             state.piece_pos = 0
 
     # Handle automatic piece movement based on clock
@@ -370,7 +461,7 @@ def curses_main(stdscr) -> None:
 
         # Handle user input
         key = stdscr.getch()
-        if key == 27 or key == ord('q'):  # Exit if ESC or 'q' is pressed
+        if key == 27 or key == ord("q"):  # Exit if ESC or 'q' is pressed
             return
 
         # Update the message state
@@ -390,13 +481,15 @@ def curses_main(stdscr) -> None:
 
         # Wait for user to exit
         key = stdscr.getch()
-        if key == 27 or key == ord('q'):  # Exit if ESC or 'q' is pressed
+        if key == 27 or key == ord("q"):  # Exit if ESC or 'q' is pressed
             return
 
 
 def main():
-    parser = argparse.ArgumentParser(description='One-Line Otimono Game')
-    parser.add_argument('--piece-pattern', '-p', type=str, help='Piece pattern (e.g. "202,112").')
+    parser = argparse.ArgumentParser(description="One-Line Otimono Game")
+    parser.add_argument(
+        "--piece-pattern", "-p", type=str, help='Piece pattern (e.g. "202,112").'
+    )
     args = parser.parse_args()
 
     if args.piece_pattern is not None:
@@ -407,6 +500,7 @@ def main():
         config.piece_generator = get_random_piece_generator(PIECE_WIDTH, PIECE_BLOCKS)
 
     curses.wrapper(curses_main)
+
 
 if __name__ == "__main__":
     main()
