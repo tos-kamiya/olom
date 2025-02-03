@@ -1,12 +1,14 @@
+import argparse
 import curses
-import random
 from dataclasses import dataclass, field
-from typing import List, Optional
+import random
+import re
+from typing import Callable, List, Optional
 
 # Constants
 FIELD_WIDTH = 10  # Width of the game field
 PIECE_WIDTH = 3   # Width of each piece
-PIECE_SIZE = 4    # Number of blocks in a piece
+PIECE_BLOCKS = 4    # Number of blocks in a piece
 MIN_RECT_WIDTH = 4  # Minimum width of a rectangle to be cleared
 
 # Symbols for display
@@ -23,6 +25,7 @@ ADDITIONAL_COLOR_PAIRS = [
     (curses.COLOR_GREEN, curses.COLOR_BLACK),  # Active piece color
     (curses.COLOR_BLUE, curses.COLOR_BLACK),   # Next piece color
 ]
+
 
 @dataclass
 class GameState:
@@ -47,22 +50,55 @@ class Message:
     time_left: int = MESSAGE_SHOW_DURATION  # Remaining time before the message disappears
 
 
-def generate_piece() -> List[int]:
-    """
-    Generate a new random piece.
+def get_random_piece_generator(width: int, blocks: int) -> Callable[[], List[int]]:
+    def gen_piece_random() -> List[int]:
+        """
+        Generate a new random piece.
 
-    Returns:
-        List[int]: A list representing the piece.
-    """
-    cells = [0] * PIECE_WIDTH
-    for _ in range(PIECE_SIZE):
-        i = random.randrange(PIECE_WIDTH)
-        cells[i] += 1
-    while cells[0] == 0:
-        cells.pop(0)
-    while cells[-1] == 0:
-        cells.pop()
-    return cells
+        Returns:
+            List[int]: A list representing the piece.
+        """
+        cells = [0] * width
+        for _ in range(blocks):
+            i = random.randrange(width)
+            cells[i] += 1
+        while cells[0] == 0:
+            cells.pop(0)
+        while cells[-1] == 0:
+            cells.pop()
+        return cells
+
+    return gen_piece_random
+
+
+def get_pattern_piece_generator(piece_pattern: List[List[int]]) -> Callable[[], List[int]]:
+    assert len(piece_pattern) > 0
+    pattern_index = 0
+
+    def gen_piece_pattern() -> List[int]:
+        nonlocal pattern_index
+
+        piece = piece_pattern[pattern_index]
+        pattern_index = (pattern_index + 1) % len(piece_pattern)
+
+        return piece
+
+    return gen_piece_pattern
+
+
+def scan_piece_pattern(pattern: str) -> List[List[int]]:
+    assert re.match(r"^[0-9,]+$", pattern) is not None
+
+    piece_strs = pattern.split(",")
+
+    pieces = []
+    for s in piece_strs:
+        piece = list(map(int, s))
+        assert sum(piece) > 0, "empty piece"
+
+        pieces.append(piece)
+
+    return pieces
 
 
 def find_rect(game_field: List[int], min_length: int) -> Optional[tuple[int, int]]:
@@ -87,12 +123,13 @@ def find_rect(game_field: List[int], min_length: int) -> Optional[tuple[int, int
     return None
 
 
-def draw_game(stdscr, state: GameState, message: Optional[Message], grayscale: bool = False) -> None:
+def draw_game(stdscr, mode: str, state: GameState, message: Optional[Message], grayscale: bool = False) -> None:
     """
     Draw the current game state.
 
     Args:
         stdscr: The curses screen object.
+        mode (str): Game mode.
         state (GameState): The current game state.
         message (Optional[Message]): A message to display, if any.
         grayscale (bool): Whether to draw in grayscale mode (for game over).
@@ -106,6 +143,10 @@ def draw_game(stdscr, state: GameState, message: Optional[Message], grayscale: b
         color_pairs = [curses.color_pair(i) for i in range(num_colors)]
 
     col = 0
+    if mode:
+        stdscr.addstr(0, col, mode)
+        col += len(mode) + 1
+
     piece_queue = state.piece_queue
 
     # Draw the next two pieces
@@ -216,7 +257,7 @@ def check_game_over(game_field: List[int]) -> bool:
     return any(v >= 11 for v in game_field)
 
 
-def update_game(state: GameState, key: int, clock_tick: int) -> Optional[Message]:
+def update_game(state: GameState, key: int, clock_tick: int, piece_generator) -> Optional[Message]:
     """
     Update the game state based on user input and the game clock.
 
@@ -245,7 +286,7 @@ def update_game(state: GameState, key: int, clock_tick: int) -> Optional[Message
         if piece_queue[0] is None:
             # Load the next piece from the queue and generate a new piece
             piece_queue.pop(0)
-            piece_queue.append(generate_piece())
+            piece_queue.append(piece_generator())
             state.piece_col = 0
             state.piece_pos = state.piece_drop_pos
         else:
@@ -282,6 +323,15 @@ def update_message(message: Optional[Message]) -> Optional[Message]:
     return message
 
 
+@dataclass
+class Config:
+    mode: str = ""
+    piece_generator: Optional[Callable[[], List[int]]] = None
+
+
+config = Config()
+
+
 def curses_main(stdscr) -> None:
     """
     Main game loop.
@@ -302,15 +352,15 @@ def curses_main(stdscr) -> None:
     clock_tick = 0  # Game clock tick counter
 
     # Initialize game state
-    state: GameState = GameState(
-        piece_queue=[generate_piece(), generate_piece(), generate_piece()]
-    )
+    pg = config.piece_generator
+    assert pg is not None
+    state: GameState = GameState(piece_queue=[pg(), pg(), pg()])
     message: Optional[Message] = None
 
     # Main game loop
     while True:
         # Draw the game state
-        draw_game(stdscr, state, message)
+        draw_game(stdscr, config.mode, state, message)
 
         # Check for game over
         if check_game_over(state.game_field):
@@ -327,13 +377,13 @@ def curses_main(stdscr) -> None:
         message = update_message(message)
 
         # Update the game state
-        m = update_game(state, key, clock_tick)
+        m = update_game(state, key, clock_tick, pg)
         if m is not None:
             message = m
 
     # Game over screen
     while True:
-        draw_game(stdscr, state, message, grayscale=True)
+        draw_game(stdscr, config.mode, state, message, grayscale=True)
 
         # Update the message state
         message = update_message(message)
@@ -344,10 +394,19 @@ def curses_main(stdscr) -> None:
             return
 
 
-# Run the game using curses
 def main():
-    curses.wrapper(curses_main)
+    parser = argparse.ArgumentParser(description='One-Line Otimono Game')
+    parser.add_argument('--piece-pattern', '-p', type=str, help='Piece pattern (e.g. "202,112").')
+    args = parser.parse_args()
 
+    if args.piece_pattern is not None:
+        piece_pattern = scan_piece_pattern(args.piece_pattern)
+        config.piece_generator = get_pattern_piece_generator(piece_pattern)
+        config.mode = "pat"
+    else:
+        config.piece_generator = get_random_piece_generator(PIECE_WIDTH, PIECE_BLOCKS)
+
+    curses.wrapper(curses_main)
 
 if __name__ == "__main__":
     main()
