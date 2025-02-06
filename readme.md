@@ -2,7 +2,7 @@
 
 A single-player falling block puzzle game. Control the falling pieces, place them on the field, and align the same numbers to clear lines.
 
-- Randomly generated pieces (3 numbers) fall onto a 10-column field.  
+- Randomly generated pieces (4 numbers) fall onto a 12-column field.  
 - When a piece lands, its numbers are added to the field.  
 - Align 4 or more of the same number horizontally to clear them. Aligning 5 or more yields higher scores.  
 - The game ends when the field fills up (when a number exceeds 10).  
